@@ -33,7 +33,6 @@ def build_featuremap(df, event, k_max=24, columns=['event_sensor_01', 'event_sen
         # feature = df_interesting.iloc[event+k-1: event+k].to_numpy()
         features.append(feature)
     features = np.array(features).flatten()
-    print(features.shape)
     return features
 
 ###### Train
@@ -43,29 +42,19 @@ training_labels = Path('data/Training_Dataset_ISOCSWinterSchool2023.csv')
 if not training_labels.exists():
     raise ValueError(f"{training_labels} does not exist.")
 labels = pd.read_csv(training_labels, sep=',')
-print(labels)
-
-# exit()
-# labels = labels.drop('Sample ID')
 labels['date_start'] = pd.to_datetime(labels['Date'] + ' ' + labels['Start'])
 labels['date_end'] = pd.to_datetime(labels['Date'] + ' ' + labels['End'])
-# print(labels.keys())
-
 
 # Load training data
 training_data = Path('data/WT1-30146.csv')
 if not training_data.exists():
     raise ValueError(f"{training_data} does not exist.")
-df = pd.read_csv(training_data, sep=';')
+df = pd.read_csv(training_data, sep=';', low_memory=False)
 
 # Filter and preprocess data
 df = df[df['element']=='WT1-30146'].dropna(subset=['air_mox0'])
 df['date'] = pd.to_datetime(df['date']).apply(lambda t: t.replace(tzinfo=None))
-
 df = df[df['date'] > pd.to_datetime('16.01.23 14:15')]
-# print(df['date'].head())
-# print(labels['date_start'])
-# exit()
 
 # Set labels
 df['odour'] = 'ambient'
@@ -74,19 +63,73 @@ for _, row in labels.iterrows():
     odour = row['Odour Type']
     for idx, df_row in df[(df['date'] >= row['date_start']) & (df['date'] <= row['date_end'])].iterrows():
         df.loc[idx, 'odour'] = row['Odour Type']
-print(np.unique(df['odour'], return_counts=True))
-label_colors = {
-    'Downhill': 'red', 
-    'Giant Slalom': 'blue', 
-    'Slalom': 'green', 
-    'ambient': 'gray',
-}
+# print(np.unique(df['odour'], return_counts=True))
 
 # Set date as index
 df = df.set_index('date')
 
+# Extract events and build training set
+X_train = []
+y_train = ['slalom', 'slalom', 'slalom', 'slalom', 'giant_slalom', 'downhill', 'giant_slalom', 'giant_slalom', 'downhill', 'downhill', 'giant_slalom', 'downhill']
+events, index_events = detect_events(df)
+for i, event in enumerate(events):
+    features = build_featuremap(df, event, k_max=20)
+    X_train.append(features)
+assert len(X_train)==len(y_train)
+X_train = np.array(X_train)
+y = np.array(y_train)
+
+# Train scaler
+scaler = StandardScaler().fit(X_train)
+X_scaled = scaler.transform(X_train)
+
+# Train classifier
+svm = SVC(kernel='linear').fit(X_scaled, y_train)
+y_pred = svm.predict(X_scaled)
+# print(y_train)
+# print(y_pred)
+
+
+##### TESTING 
+# Load testing data
+testing_data = Path('data/WT1-30146_test.csv')
+if not testing_data.exists():
+    raise ValueError(f"{testing_data} does not exist.")
+df_test = pd.read_csv(testing_data, sep=';', low_memory=False)
+
+# Filter and preprocess data
+df_test = df_test[df_test['element']=='WT1-30146'].dropna(subset=['air_mox0'])
+df_test['date'] = pd.to_datetime(df_test['date']).apply(lambda t: t.replace(tzinfo=None))
+df_test = df_test[df_test['date'] > pd.to_datetime('16.01.23 12:00')]
+
+# Set date as index
+df_test = df_test.set_index('date')
+
+# Extract events and build testing set
+X_test = []
+events, index_events = detect_events(df_test)
+for i, event in enumerate(events):
+    features = build_featuremap(df_test, event, k_max=20)
+    X_test.append(features)
+X_test = np.array(X_test)
+
+# Transform with scaler
+X_test_scaled = scaler.transform(X_test)
+
+# Predict with classifier
+y_test_pred = svm.predict(X_test_scaled)
+print(f"Prediction: {y_test_pred}")
+print(f"at {list(index_events)} respectively")
+
 if explore:
     # Explore
+    label_colors = {
+    'Downhill': 'red', 
+    'Giant Slalom': 'blue', 
+    'Slalom': 'green', 
+    'ambient': 'gray',
+    }
+
     # Create dataframes for each measurement type
     df_pid = df['pid_ug_m3'].astype('float')
     df_mox = df[['air_mox0', 'air_mox1', 'air_mox2', 'air_mox3']].astype('float')
@@ -130,69 +173,10 @@ if explore:
         ax2.plot(df_event[event_column], c='g', label=event_column)
         ax2.set_ylabel(event_column)
 
-
     ax[-1].set_xlabel("Datetime")
     fig.align_ylabels()
     plt.show()
 
-# Extract events and build training set
-X_train = []
-y_train = ['slalom', 'slalom', 'slalom', 'slalom', 'giant_slalom', 'downhill', 'giant_slalom', 'giant_slalom', 'downhill', 'downhill', 'giant_slalom', 'downhill']
-events, index_events = detect_events(df)
-for i, event in enumerate(events):
-    features = build_featuremap(df, event, k_max=20)
-    X_train.append(features)
-assert len(X_train)==len(y_train)
-X_train = np.array(X_train)
-y = np.array(y_train)
-
-# Train scaler
-scaler = StandardScaler().fit(X_train)
-X_scaled = scaler.transform(X_train)
-
-# Train classifier
-svm = SVC(kernel='linear').fit(X_scaled, y_train)
-y_pred = svm.predict(X_scaled)
-# print(y_train)
-# print(y_pred)
-
-
-
-# Load testing data
-testing_data = Path('data/WT1-30146_test.csv')
-if not testing_data.exists():
-    raise ValueError(f"{testing_data} does not exist.")
-df_test = pd.read_csv(testing_data, sep=';')
-
-# Filter and preprocess data
-df_test = df_test[df_test['element']=='WT1-30146'].dropna(subset=['air_mox0'])
-df_test['date'] = pd.to_datetime(df_test['date']).apply(lambda t: t.replace(tzinfo=None))
-
-df_test = df_test[df_test['date'] > pd.to_datetime('16.01.23 12:00')]
-
-# Set date as index
-df_test = df_test.set_index('date')
-
-# Extract events and build testing set
-X_test = []
-events, index_events = detect_events(df_test)
-# print(events, index_events)
-for i, event in enumerate(events):
-    features = build_featuremap(df_test, event, k_max=20)
-    X_test.append(features)
-X_test = np.array(X_test)
-
-# Transform with scaler
-# scaler = StandardScaler().fit(X_train)
-X_test_scaled = scaler.transform(X_test)
-
-# Predict with classifier
-y_test_pred = svm.predict(X_test_scaled)
-print("Prediction:", y_test_pred)
-
-# exit()
-
-if explore: 
     # Create dataframes for each measurement type
     df_pid = df_test['pid_ug_m3'].astype('float')
     df_mox = df_test[['air_mox0', 'air_mox1', 'air_mox2', 'air_mox3']].astype('float')
@@ -227,7 +211,6 @@ if explore:
     ax[-1].set_xlabel("Datetime")
     fig.align_ylabels()
     plt.show()
-    exit()
 
 exit()
 ##########
