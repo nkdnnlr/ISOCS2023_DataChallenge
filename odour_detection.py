@@ -7,10 +7,23 @@ from pathlib import Path
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.svm import SVC
-# from sklearn.neighbors import KNeighborsClassifier
-from sklearn.metrics import f1_score, recall_score, accuracy_score
+from sklearn.metrics import f1_score, accuracy_score
 
 def exploration(df, show_events=False, show_groundtruth=True):
+    """
+    This function takes a dataframe `df` and plots the data in the dataframe in a graph.
+    The following columns are plotted:
+        - pid_ug_m3
+        - air_mox0, air_mox1, air_mox2, air_mox3
+        - air_NH3, air_H2S
+        - event_sensor_01, event_sensor_02, event_sensor_03, event_sensor_04
+
+    :param df: Dataframe containing the data to be plotted.
+    :param show_events: boolean, if True, events will be plotted.
+    :param show_groundtruth: boolean, if True, ground truth data will be plotted.
+    :return: None
+    """
+
     # Explore
     label_colors = {
     'Downhill': 'red', 
@@ -31,15 +44,13 @@ def exploration(df, show_events=False, show_groundtruth=True):
     peaks_y = peaks_y['peak_heights']
 
     # Create the figure and axes
-    fig, ax = plt.subplots(nrows=8, sharex=True, figsize=(8,8))
+    fig, ax = plt.subplots(nrows=8, sharex=True, figsize=(12,12))
 
     # Plot the data
     if show_groundtruth:
         ax[0].scatter(df.index, [1]*len(df), c=[label_colors[l] for l in df['odour']], label=[l for l in df['odour']], s=20, marker="|")
-        ax[0].set_ylabel("Ground truth")
-    
+
     ax[1].plot(df_pid, c='r', label='PID')
-    ax[1].set_ylabel('PID')
 
     if show_events:
         df_pid.iloc[peaks_x].plot(style='.', ax=ax[1], c='k')
@@ -50,7 +61,7 @@ def exploration(df, show_events=False, show_groundtruth=True):
 
     for i, mox_column in enumerate(df_mox.columns):
         ax[i+1+3].plot(df_mox[mox_column], c='k', label=mox_column)
-        ax[i+1+3].set_ylabel(f"MOX{i+1}")
+        ax[i+1+3].set_ylabel(f"MOX{i+1}\n(ohm)")
 
     for ax_ in ax:
         ax_.grid()
@@ -60,11 +71,24 @@ def exploration(df, show_events=False, show_groundtruth=True):
         ax2.set_ylabel(f"d/dx MOX{i+1}")
         ax2.yaxis.label.set_color('green')
 
+    ax[0].set_ylabel("Ground truth")
+    ax[0].set_yticks([])
+    ax[1].set_ylabel('PID\n(ug/m^3)')
+    ax[2].set_ylabel('NH3\n(ppm)')
+    ax[3].set_ylabel('H2S\n(ppm)')
+
     ax[-1].set_xlabel("Datetime")
     fig.align_ylabels()
     plt.show()
 
 def detect_events(df):
+    """
+    This function takes a dataframe `df` and finds peaks of the 1st derivative of the 'pid_ug_m3' column in the dataframe.
+    It returns the indices of the gas response onsets in the dataframe.
+
+    :param df: Dataframe containing the 'pid_ug_m3' column.
+    :return: The indices of the gas response onsets in the dataframe.
+    """
     # Find peaks of PID 1st derivative
     df_pid = df['pid_ug_m3'].astype('float')
     pid_1stderivative = np.gradient(df_pid.to_numpy())
@@ -74,6 +98,18 @@ def detect_events(df):
     return peaks_x, index_events
 
 def build_featuremap(df, event):
+    """
+    This function takes a dataframe `df` and an event index `event`.
+    It takes a subset of the dataframe from 1 minute before to 6 minutes after the event index.
+    It then takes the 4th degree polynomial fit of the 'air_mox0', 'air_mox1', 'air_mox2', 'air_mox3' columns
+    and flattens them, as well as taking the 'event_sensor_01', 'event_sensor_02', 'event_sensor_03', 
+    'event_sensor_04', 'air_H2S' columns and flattening them. 
+    It then concatenates both arrays and returns the result.
+    :param df: Dataframe containing the data
+    :param event: an index representing the event in the dataframe
+    :return: A concatenated array of the polynomial fit and event sensor data
+    """
+
     event_columns=['event_sensor_01', 'event_sensor_02', 'event_sensor_03', 'event_sensor_04', 'air_H2S']
     mox_columns = ['air_mox0', 'air_mox1', 'air_mox2', 'air_mox3']
     minus = -6 # 1 minute before detected onset
@@ -97,6 +133,12 @@ def build_featuremap(df, event):
     return np.concatenate([windowfeatures, polyfeatures])
 
 def load_training_labels(path):
+    """
+    This function loads and returns the training labels data from a csv file located at the specified path.
+    :param path: path to the csv file containing the training labels
+    :return: a dataframe containing the training labels data
+    """
+
     training_labels = Path(path)
     if not training_labels.exists():
         raise ValueError(f"{training_labels} does not exist.")
@@ -106,6 +148,13 @@ def load_training_labels(path):
     return labels
 
 def load_data(path, labels=None):
+    """
+    This function loads and returns the data from a csv file located at the specified path.
+    :param path: path to the csv file containing the data
+    :param labels: dataframe containing training labels. if provided, it will be used to set labels to the data
+    :return: a dataframe containing the data
+    """
+
     data = Path(path)
     if not data.exists():
         raise ValueError(f"{data} does not exist.")
@@ -127,6 +176,13 @@ def load_data(path, labels=None):
     return df
 
 def get_features(df, events):
+    """
+    This function takes a dataframe `df` and a list of events `events` and for each event, it extracts the features
+    using the build_featuremap() function and returns an array of all the extracted features
+    :param df: Dataframe containing the data
+    :param events: List of events
+    :return: An array of extracted features
+    """
     X = []
     for i, event in enumerate(events):
         features = build_featuremap(df, event)
@@ -135,10 +191,18 @@ def get_features(df, events):
     return X
 
 def train_validate(X_train_all, y_train_all, train_idxs, val_idxs):
+    """
+    This function takes training and validation arrays and indices, and performs training and validation using them.
+    It returns a list of scores, accuracies, recalls, and f1-scores.
+    :param X_train_all: training features
+    :param y_train_all: training labels
+    :param train_idxs: indices of training data
+    :param val_idxs: indices of validation data
+    :return: list of accuracies and f1-scores
+    """
     scores = []
 
     accuracies = []
-    recalls = []
     f1_scores = []
     for train_idx, val_idx in zip(train_idxs, val_idxs):
         X_train, y_train = X_train_all[train_idx], y_train_all[train_idx]
@@ -149,7 +213,6 @@ def train_validate(X_train_all, y_train_all, train_idxs, val_idxs):
         X_scaled = scaler.transform(X_train)
 
         # Train classifier
-        # classifier = KNeighborsClassifier().fit(X_scaled, y_train)
         classifier = SVC(kernel='linear').fit(X_scaled, y_train)
         y_pred = classifier.predict(X_scaled)
 
@@ -160,17 +223,20 @@ def train_validate(X_train_all, y_train_all, train_idxs, val_idxs):
         scores.append(score)
 
         accuracies.append(accuracy_score(y_val, y_pred))
-        # recalls.append(recall_score(y_val, y_pred, average='weighted'))
         f1_scores.append(f1_score(y_val, y_pred, average='weighted'))
         
-        # print(score)
-    print(f"\n Validation:")
-    print(f"\t Accuracy: {np.mean(accuracies):2f} pm {np.std(accuracies):2f}")
-    # print(f"\t Recall: {np.mean(recalls):2f} pm {np.std(recalls):2f}")
-    print(f"\t F1 Score: {np.mean(f1_scores):2f} pm {np.std(f1_scores):2f}")
+    return accuracies, f1_scores
     
 
 def train_full(X_train_all, y_train_all):
+    """
+    This function takes training features and labels as input and trains a support vector machine (SVM) model on the data. 
+    The input features are scaled using the StandardScaler. 
+    The function returns the scaler object used and the trained SVM model.
+    :param X_train_all: training features
+    :param y_train_all: training labels
+    :return: a tuple containing the scaler object and the trained SVM model
+    """
     # Train scaler
     scaler = StandardScaler(with_mean=True, with_std=True).fit(X_train_all)
     X_scaled_all = scaler.transform(X_train_all)
@@ -180,6 +246,15 @@ def train_full(X_train_all, y_train_all):
     return scaler, classifier
 
 def pc_analysis(X_train_all, y_train_all, pca=None):
+    """
+    This function takes training features and labels as input and performs principal component analysis (PCA) on the data.
+    The input features are scaled using the StandardScaler. 
+    The function returns the PCA object used.
+    :param X_train_all: training features
+    :param y_train_all: training labels
+    :param pca: PCA object
+    :return: the PCA object used
+    """
     scaler = StandardScaler().fit(X_train_all)
     X_train_all = scaler.transform(X_train_all)
 
@@ -203,6 +278,14 @@ def pc_analysis(X_train_all, y_train_all, pca=None):
     return pca
 
 def test_predict(X_test, scaler, classifier):
+    """
+    This function takes a set of test features and a pre-trained scaler and classifier as input.
+    It applies the scaler on the test features and uses the classifier to predict the labels for the test features.
+    :param X_test: test features
+    :param scaler: pre-trained StandardScaler object
+    :param classifier: pre-trained SVM classifier object
+    :return: predicted labels for the test features
+    """
     # Transform with scaler
     X_test_scaled = scaler.transform(X_test)
 
@@ -286,4 +369,8 @@ if __name__ == '__main__':
         X_test = get_features(df_test, events)
 
         # Test trained model on test data
-        test(X_test, scaler, classifier)
+        y_test_pred = test_predict(X_test, scaler, classifier)
+
+        print(f"\n Prediction:")
+        print(f"\t {y_test_pred}")
+        print(f"at {list(index_events)} respectively\n ") 
