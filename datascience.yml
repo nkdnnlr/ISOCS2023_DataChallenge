@@ -1,0 +1,14 @@
+name: datascience
+channels:
+  - defaults
+dependencies:
+  - pandas
+  - scipy
+  - tqdm
+  - numpy
+  - matplotlib
+  - ipywidgets
+  - ipympl
+  - seaborn
+  - scikit-learn
+prefix: /opt/homebrew/anaconda3/envs/datascience
